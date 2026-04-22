@@ -1,4 +1,4 @@
-# 👻 SnapFarm AI - Multi-Bot Command Center
+# SnapFarm AI - Multi-Bot Command Center
 
 ![Python](https://img.shields.io/badge/Python-3.10-blue?logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.95-009688?logo=fastapi&logoColor=white)
@@ -11,7 +11,7 @@
 
 ---
 
-## 🚀 Key Features
+##  Key Features
 
 *   **Multi-Bot Architecture**: Run 10+ accounts simultaneously (dependent on server RAM).
 *   **Windows 10 Spoofing**: Bypasses "Browser Not Supported" and "Automated Software" detection.
@@ -22,7 +22,7 @@
 
 ---
 
-## 🛠️ Architecture
+##  Architecture
 
 The system consists of two parts:
 
@@ -31,7 +31,7 @@ The system consists of two parts:
 
 ---
 
-## 📦 Deployment Guide
+##  Deployment Guide
 
 ### Phase 1: The Backend (Railway)
 

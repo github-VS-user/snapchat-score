@@ -8,13 +8,12 @@ from selenium.webdriver.support import expected_conditions as EC
 import os
 import time
 import subprocess
-import random
+import shutil
 
 app = FastAPI()
 
-# --- 1. MEMORY GUARD ---
+# --- 1. MEMORY & PROCESS CLEANUP ---
 def kill_zombies():
-    """Violently kills stuck processes to save RAM."""
     subprocess.run(["pkill", "-f", "chrome"], stderr=subprocess.DEVNULL)
     subprocess.run(["pkill", "-f", "chromedriver"], stderr=subprocess.DEVNULL)
 
@@ -36,60 +35,44 @@ async def server_root():
     <!DOCTYPE html>
     <html>
     <head>
-        <title>SnapFarm Node | Online</title>
+        <title>SnapFarm | System Node</title>
         <meta http-equiv="refresh" content="5">
         <style>
-            body { background: #050505; color: #00ff41; font-family: 'Courier New', monospace; margin: 0; display: flex; align-items: center; justify-content: center; height: 100vh; }
-            .terminal { width: 80%; max-width: 600px; border: 1px solid #333; padding: 20px; background: #000; box-shadow: 0 0 20px rgba(0, 255, 65, 0.2); }
-            h1 { border-bottom: 1px solid #333; padding-bottom: 10px; font-size: 18px; margin: 0 0 20px 0; text-transform: uppercase; letter-spacing: 2px; }
-            .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 20px; }
-            .stat-box { border: 1px solid #222; padding: 10px; }
-            .label { font-size: 10px; color: #666; display: block; }
-            .value { font-size: 24px; font-weight: bold; }
-            .log-box { height: 150px; overflow: hidden; border-top: 1px dashed #333; padding-top: 10px; font-size: 12px; color: #888; }
-            .blink { animation: blink 1s infinite; }
-            @keyframes blink { 50% { opacity: 0; } }
-            .status-ok { color: #00ff41; }
+            body { background: #0d0d0d; color: #e0e0e0; font-family: monospace; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+            .panel { border: 1px solid #333; padding: 30px; width: 400px; background: #111; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+            h1 { color: #FFFC00; margin: 0 0 20px; font-size: 20px; text-transform: uppercase; }
+            .stat { display: flex; justify-content: space-between; margin-bottom: 10px; border-bottom: 1px solid #222; padding-bottom: 5px; }
+            .log-view { background: #000; height: 150px; overflow: hidden; font-size: 11px; color: #888; padding: 10px; margin-top: 20px; border: 1px solid #222; }
+            .ok { color: #0f0; }
         </style>
     </head>
     <body>
-        <div class="terminal">
-            <h1>System_Node_v5 <span class="blink">_</span></h1>
-            <div class="grid">
-                <div class="stat-box">
-                    <span class="label">ACTIVE INSTANCES</span>
-                    <span class="value" id="bots">...</span>
-                </div>
-                <div class="stat-box">
-                    <span class="label">SYSTEM STATUS</span>
-                    <span class="value status-ok">STABLE</span>
-                </div>
-            </div>
-            <div class="log-box" id="logs">
-                > System initialized...
-            </div>
-            <p style="font-size: 10px; color: #444; margin-top: 10px;">PATCH: CDP_METADATA_V2</p>
+        <div class="panel">
+            <h1>System_Override_v6</h1>
+            <div class="stat"><span>STATUS</span> <span class="ok">ONLINE</span></div>
+            <div class="stat"><span>ACTIVE BOTS</span> <span id="count">...</span></div>
+            <div class="stat"><span>DRIVER MODE</span> <span style="color: #FFFC00">MANUAL_VER_120</span></div>
+            <div class="log-view" id="logs">Connecting...</div>
         </div>
         <script>
-            fetch('/bot/status').then(r => r.json()).then(data => {
-                document.getElementById('bots').innerText = Object.keys(data).length;
-            });
-            fetch('/bot/status').then(r => r.json()).then(data => {
-                const user = Object.keys(data)[0];
-                if(user) {
-                    fetch('/bot/logs?username='+user).then(r => r.json()).then(d => {
-                        document.getElementById('logs').innerHTML = d.logs.slice(-6).map(l => `> ${l}`).join('<br>');
-                    });
-                }
-            });
+            const update = () => {
+                fetch('/bot/status').then(r=>r.json()).then(d => {
+                    document.getElementById('count').innerText = Object.keys(d).length;
+                    if(Object.keys(d).length > 0) {
+                        fetch('/bot/logs?username='+Object.keys(d)[0]).then(r=>r.json()).then(l => {
+                            document.getElementById('logs').innerHTML = l.logs.slice(-7).join('<br>');
+                        });
+                    }
+                });
+            };
+            setInterval(update, 3000); update();
         </script>
     </body>
     </html>
     """
 
 def log(username, message):
-    tag = "[Error]" if "fail" in str(message).lower() or "crash" in str(message).lower() else "[System]"
-    entry = f"{time.strftime('%H:%M:%S')} {tag} {message}"
+    entry = f"{time.strftime('%H:%M:%S')} {message}"
     print(f"[{username}] {entry}")
     if username in BOT_REGISTRY:
         BOT_REGISTRY[username]["logs"].append(entry)
@@ -104,43 +87,22 @@ class SnapBot:
         self.user_data = f"/app/driver_data/{username}"
 
     def spoof(self):
-        """
-        FIXED: Includes 'model', 'bitness', and 'fullVersionList' to prevent 'Invalid Param' crash.
-        """
+        """Injects Windows 11 Identity"""
         if not self.driver: return
         try:
             self.driver.execute_cdp_cmd("Network.setUserAgentOverride", {
                 "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
                 "platform": "Windows",
                 "userAgentMetadata": {
-                    "brands": [
-                        {"brand": "Google Chrome", "version": "125"},
-                        {"brand": "Chromium", "version": "125"}
-                    ],
-                    "fullVersionList": [
-                        {"brand": "Google Chrome", "version": "125.0.6422.141"},
-                        {"brand": "Chromium", "version": "125.0.6422.141"}
-                    ],
+                    "brands": [{"brand": "Google Chrome", "version": "125"}, {"brand": "Chromium", "version": "125"}],
                     "fullVersion": "125.0.6422.141",
                     "platform": "Windows",
-                    "platformVersion": "10.0.0",
+                    "platformVersion": "15.0.0",
                     "architecture": "x86",
-                    "model": "",
-                    "mobile": False,
-                    "bitness": "64",
-                    "wow64": False
+                    "mobile": False
                 }
             })
-            
-            # Extra Stealth: Hide WebDriver property
-            self.driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
-                "source": """
-                    Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-                    Object.defineProperty(navigator, 'maxTouchPoints', { get: () => 0 });
-                """
-            })
-        except Exception as e:
-            log(self.username, f"Spoofing Warning (Non-Fatal): {e}")
+        except: pass
 
     def start_driver(self):
         if self.driver: return
@@ -148,39 +110,47 @@ class SnapBot:
         options = uc.ChromeOptions()
         options.binary_location = "/usr/bin/chromium"
         
-        # RAM & Stability Flags
-        options.add_argument("--headless=new") 
+        # STABILITY FLAGS
+        options.add_argument("--headless=new")
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
         options.add_argument("--disable-gpu")
-        options.add_argument("--renderer-process-limit=1")
-        options.add_argument("--window-size=1366,768")
+        options.add_argument("--disable-software-rasterizer")
+        options.add_argument("--blink-settings=imagesEnabled=true")
         options.add_argument(f"--user-data-dir={self.user_data}")
         
         if self.proxy: options.add_argument(f'--proxy-server={self.proxy}')
 
-        log(self.username, "Booting Chrome Engine...")
-        self.driver = uc.Chrome(options=options, driver_executable_path="/usr/bin/chromedriver")
+        log(self.username, "Starting Driver (Version Check Skipped)...")
+        
+        # --- THE FIX: FORCE VERSION & SKIP PATCHING ---
+        self.driver = uc.Chrome(
+            options=options, 
+            driver_executable_path="/usr/bin/chromedriver",
+            version_main=125,  # Hardcodes version to skip auto-detection
+            use_subprocess=True # Improves stability in Docker
+        )
+        self.driver.set_window_size(1366, 768)
         self.spoof()
 
     def login(self):
         try:
             self.start_driver()
-            wait = WebDriverWait(self.driver, 20)
+            wait = WebDriverWait(self.driver, 25)
             
-            log(self.username, "Navigating to Snapchat...")
+            log(self.username, "Navigating...")
             self.driver.get("https://web.snapchat.com/")
+            
+            # Check for bans/blocks immediately
             time.sleep(5)
-
-            if "browser not supported" in self.driver.page_source.lower():
-                log(self.username, "Error: Browser Detected (Cat Screen).")
-                return "ERROR_DETECTED"
+            src = self.driver.page_source.lower()
+            if "browser not supported" in src: return "ERROR_CAT_SCREEN"
+            if "forbidden" in src: return "ERROR_IP_BAN"
 
             if len(self.driver.find_elements(By.CLASS_NAME, "FiLwP")) > 0:
-                log(self.username, "Session Restored.")
                 return "LOGGED_IN"
 
-            log(self.username, "Entering credentials...")
+            log(self.username, "Inputting Creds...")
             try:
                 wait.until(EC.element_to_be_clickable((By.ID, "account_identifier"))).send_keys(self.username)
                 self.driver.find_element(By.XPATH, "//button[@type='submit']").click()
@@ -189,18 +159,16 @@ class SnapBot:
                 self.driver.find_element(By.XPATH, "//button[@type='submit']").click()
             except: pass
 
-            time.sleep(5)
-            if "verification" in self.driver.page_source.lower(): 
-                log(self.username, "2FA Code Required.")
-                return "2FA_REQUIRED"
-            
+            time.sleep(8)
+            if "verification" in self.driver.page_source.lower(): return "2FA_REQUIRED"
             return "LOGGED_IN"
+
         except Exception as e:
-            log(self.username, f"Crash: {str(e)[:40]}")
+            log(self.username, f"Crash: {str(e)[:50]}")
             return "ERROR"
 
     def farm(self):
-        log(self.username, "Farming active.")
+        log(self.username, "Farming Active.")
         while True: time.sleep(60)
     
     def stop(self):
@@ -209,15 +177,13 @@ class SnapBot:
             except: pass
             self.driver = None
 
-# --- API ---
 @app.post("/bot/spawn")
 async def spawn_bot(data: dict, bg: BackgroundTasks):
     user = data.get("username")
-    # RAM Protection: Kill old instance
     if user in BOT_REGISTRY:
         BOT_REGISTRY[user]["instance"].stop()
         del BOT_REGISTRY[user]
-        time.sleep(1) 
+        time.sleep(2)
 
     BOT_REGISTRY[user] = {"instance": SnapBot(user, data.get("password"), data.get("proxy")), "logs": [], "status": "Starting"}
     
@@ -281,3 +247,4 @@ def get_logs(username: str):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
+

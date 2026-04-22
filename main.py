@@ -9,13 +9,12 @@ import os
 import time
 import subprocess
 import random
-import json
 
 app = FastAPI()
 
-# --- 1. MEMORY GUARD (Fixes 'Session Not Created') ---
+# --- 1. MEMORY GUARD ---
 def kill_zombies():
-    """Violently kills stuck processes to save RAM on startup."""
+    """Violently kills stuck processes to save RAM."""
     subprocess.run(["pkill", "-f", "chrome"], stderr=subprocess.DEVNULL)
     subprocess.run(["pkill", "-f", "chromedriver"], stderr=subprocess.DEVNULL)
 
@@ -30,7 +29,7 @@ app.add_middleware(
 
 BOT_REGISTRY = {}
 
-# --- 2. THE CYBERPUNK STATUS PAGE ---
+# --- 2. SERVER UI ---
 @app.get("/", response_class=HTMLResponse)
 async def server_root():
     return """
@@ -51,38 +50,35 @@ async def server_root():
             .blink { animation: blink 1s infinite; }
             @keyframes blink { 50% { opacity: 0; } }
             .status-ok { color: #00ff41; }
-            .status-err { color: #ff0033; }
         </style>
     </head>
     <body>
         <div class="terminal">
-            <h1>System_Node_v4 <span class="blink">_</span></h1>
+            <h1>System_Node_v5 <span class="blink">_</span></h1>
             <div class="grid">
                 <div class="stat-box">
                     <span class="label">ACTIVE INSTANCES</span>
                     <span class="value" id="bots">...</span>
                 </div>
                 <div class="stat-box">
-                    <span class="label">MEMORY STATUS</span>
-                    <span class="value status-ok">OPTIMIZED</span>
+                    <span class="label">SYSTEM STATUS</span>
+                    <span class="value status-ok">STABLE</span>
                 </div>
             </div>
             <div class="log-box" id="logs">
-                > Initializing UI...<br>
-                > Connected to Railway Core...
+                > System initialized...
             </div>
-            <p style="font-size: 10px; color: #444; margin-top: 10px;">SPOOFING: WINDOWS 11 / CHROME 125</p>
+            <p style="font-size: 10px; color: #444; margin-top: 10px;">PATCH: CDP_METADATA_V2</p>
         </div>
         <script>
             fetch('/bot/status').then(r => r.json()).then(data => {
                 document.getElementById('bots').innerText = Object.keys(data).length;
             });
-            // Fetch logs from the first active bot if available
             fetch('/bot/status').then(r => r.json()).then(data => {
                 const user = Object.keys(data)[0];
                 if(user) {
                     fetch('/bot/logs?username='+user).then(r => r.json()).then(d => {
-                        document.getElementById('logs').innerHTML = d.logs.slice(-5).map(l => `> ${l}`).join('<br>');
+                        document.getElementById('logs').innerHTML = d.logs.slice(-6).map(l => `> ${l}`).join('<br>');
                     });
                 }
             });
@@ -92,7 +88,7 @@ async def server_root():
     """
 
 def log(username, message):
-    tag = "[Error]" if "fail" in str(message).lower() else "[System]"
+    tag = "[Error]" if "fail" in str(message).lower() or "crash" in str(message).lower() else "[System]"
     entry = f"{time.strftime('%H:%M:%S')} {tag} {message}"
     print(f"[{username}] {entry}")
     if username in BOT_REGISTRY:
@@ -108,23 +104,43 @@ class SnapBot:
         self.user_data = f"/app/driver_data/{username}"
 
     def spoof(self):
-        """Injects fake Windows 11 parameters via CDP"""
+        """
+        FIXED: Includes 'model', 'bitness', and 'fullVersionList' to prevent 'Invalid Param' crash.
+        """
         if not self.driver: return
-        self.driver.execute_cdp_cmd("Network.setUserAgentOverride", {
-            "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-            "platform": "Windows",
-            "userAgentMetadata": {
-                "brands": [{"brand": "Google Chrome", "version": "125"}, {"brand": "Chromium", "version": "125"}],
-                "fullVersion": "125.0.6422.141",
+        try:
+            self.driver.execute_cdp_cmd("Network.setUserAgentOverride", {
+                "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
                 "platform": "Windows",
-                "platformVersion": "15.0.0",
-                "architecture": "x86",
-                "mobile": False
-            }
-        })
-        self.driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
-            "source": "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
-        })
+                "userAgentMetadata": {
+                    "brands": [
+                        {"brand": "Google Chrome", "version": "125"},
+                        {"brand": "Chromium", "version": "125"}
+                    ],
+                    "fullVersionList": [
+                        {"brand": "Google Chrome", "version": "125.0.6422.141"},
+                        {"brand": "Chromium", "version": "125.0.6422.141"}
+                    ],
+                    "fullVersion": "125.0.6422.141",
+                    "platform": "Windows",
+                    "platformVersion": "10.0.0",
+                    "architecture": "x86",
+                    "model": "",
+                    "mobile": False,
+                    "bitness": "64",
+                    "wow64": False
+                }
+            })
+            
+            # Extra Stealth: Hide WebDriver property
+            self.driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
+                "source": """
+                    Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+                    Object.defineProperty(navigator, 'maxTouchPoints', { get: () => 0 });
+                """
+            })
+        except Exception as e:
+            log(self.username, f"Spoofing Warning (Non-Fatal): {e}")
 
     def start_driver(self):
         if self.driver: return
@@ -132,20 +148,18 @@ class SnapBot:
         options = uc.ChromeOptions()
         options.binary_location = "/usr/bin/chromium"
         
-        # --- RAM SAVING FLAGS (Critical for 500MB Limit) ---
+        # RAM & Stability Flags
         options.add_argument("--headless=new") 
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
         options.add_argument("--disable-gpu")
-        options.add_argument("--renderer-process-limit=1") # Limits Chrome to 1 process
-        options.add_argument("--disable-extensions")
-        options.add_argument("--blink-settings=imagesEnabled=true") 
-        options.add_argument("--window-size=1366,768") # Smaller window = less RAM
-        
+        options.add_argument("--renderer-process-limit=1")
+        options.add_argument("--window-size=1366,768")
         options.add_argument(f"--user-data-dir={self.user_data}")
+        
         if self.proxy: options.add_argument(f'--proxy-server={self.proxy}')
 
-        log(self.username, "Booting Memory-Optimized Chrome...")
+        log(self.username, "Booting Chrome Engine...")
         self.driver = uc.Chrome(options=options, driver_executable_path="/usr/bin/chromedriver")
         self.spoof()
 
@@ -153,17 +167,20 @@ class SnapBot:
         try:
             self.start_driver()
             wait = WebDriverWait(self.driver, 20)
-            log(self.username, "Opening Snapchat...")
+            
+            log(self.username, "Navigating to Snapchat...")
             self.driver.get("https://web.snapchat.com/")
             time.sleep(5)
 
             if "browser not supported" in self.driver.page_source.lower():
-                log(self.username, "CRITICAL: Browser Detected. Spoof Failed.")
+                log(self.username, "Error: Browser Detected (Cat Screen).")
                 return "ERROR_DETECTED"
 
             if len(self.driver.find_elements(By.CLASS_NAME, "FiLwP")) > 0:
+                log(self.username, "Session Restored.")
                 return "LOGGED_IN"
 
+            log(self.username, "Entering credentials...")
             try:
                 wait.until(EC.element_to_be_clickable((By.ID, "account_identifier"))).send_keys(self.username)
                 self.driver.find_element(By.XPATH, "//button[@type='submit']").click()
@@ -173,14 +190,17 @@ class SnapBot:
             except: pass
 
             time.sleep(5)
-            if "verification" in self.driver.page_source.lower(): return "2FA_REQUIRED"
+            if "verification" in self.driver.page_source.lower(): 
+                log(self.username, "2FA Code Required.")
+                return "2FA_REQUIRED"
+            
             return "LOGGED_IN"
         except Exception as e:
             log(self.username, f"Crash: {str(e)[:40]}")
             return "ERROR"
 
     def farm(self):
-        log(self.username, "Farming started.")
+        log(self.username, "Farming active.")
         while True: time.sleep(60)
     
     def stop(self):
@@ -189,13 +209,15 @@ class SnapBot:
             except: pass
             self.driver = None
 
+# --- API ---
 @app.post("/bot/spawn")
 async def spawn_bot(data: dict, bg: BackgroundTasks):
     user = data.get("username")
+    # RAM Protection: Kill old instance
     if user in BOT_REGISTRY:
         BOT_REGISTRY[user]["instance"].stop()
         del BOT_REGISTRY[user]
-        time.sleep(2) # Wait for RAM release
+        time.sleep(1) 
 
     BOT_REGISTRY[user] = {"instance": SnapBot(user, data.get("password"), data.get("proxy")), "logs": [], "status": "Starting"}
     
@@ -224,6 +246,14 @@ def remove_bot(username: str):
         del BOT_REGISTRY[username]
     return {"status": "Removed"}
 
+@app.post("/bot/stop")
+def stop_bot(data: dict):
+    user = data.get("username")
+    if user in BOT_REGISTRY:
+        BOT_REGISTRY[user]["instance"].stop()
+        BOT_REGISTRY[user]["status"] = "Stopped"
+    return {"status": "Stopped"}
+
 @app.post("/bot/2fa")
 async def handle_2fa(data: dict, bg: BackgroundTasks):
     user = data.get("username")
@@ -231,8 +261,7 @@ async def handle_2fa(data: dict, bg: BackgroundTasks):
         try:
             bot = BOT_REGISTRY[user]["instance"]
             bot.driver.find_element(By.TAG_NAME, "input").send_keys(data.get("code"))
-            try: bot.driver.find_element(By.XPATH, "//button[@type='submit']").click()
-            except: pass
+            bot.driver.find_element(By.XPATH, "//button[@type='submit']").click()
             time.sleep(5)
             if len(bot.driver.find_elements(By.CLASS_NAME, "FiLwP")) > 0:
                  BOT_REGISTRY[user]["status"] = "Running"

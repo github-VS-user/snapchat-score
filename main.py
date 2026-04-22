@@ -12,7 +12,7 @@ import shutil
 
 app = FastAPI()
 
-# --- 1. MEMORY & PROCESS CLEANUP ---
+# --- 1. FORCE CLEANUP ---
 def kill_zombies():
     subprocess.run(["pkill", "-f", "chrome"], stderr=subprocess.DEVNULL)
     subprocess.run(["pkill", "-f", "chromedriver"], stderr=subprocess.DEVNULL)
@@ -28,54 +28,39 @@ app.add_middleware(
 
 BOT_REGISTRY = {}
 
-# --- 2. SERVER UI ---
+# --- 2. STATUS DASHBOARD ---
 @app.get("/", response_class=HTMLResponse)
 async def server_root():
     return """
     <!DOCTYPE html>
     <html>
     <head>
-        <title>SnapFarm | System Node</title>
+        <title>SnapFarm Node | Active</title>
         <meta http-equiv="refresh" content="5">
         <style>
-            body { background: #0d0d0d; color: #e0e0e0; font-family: monospace; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
-            .panel { border: 1px solid #333; padding: 30px; width: 400px; background: #111; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
-            h1 { color: #FFFC00; margin: 0 0 20px; font-size: 20px; text-transform: uppercase; }
-            .stat { display: flex; justify-content: space-between; margin-bottom: 10px; border-bottom: 1px solid #222; padding-bottom: 5px; }
-            .log-view { background: #000; height: 150px; overflow: hidden; font-size: 11px; color: #888; padding: 10px; margin-top: 20px; border: 1px solid #222; }
-            .ok { color: #0f0; }
+            body { background: #111; color: #fff; font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+            .box { border: 2px solid #333; padding: 20px; width: 300px; background: #000; }
+            .row { display: flex; justify-content: space-between; margin-bottom: 10px; border-bottom: 1px solid #222; padding-bottom: 5px; }
+            .green { color: #0f0; }
         </style>
     </head>
     <body>
-        <div class="panel">
-            <h1>System_Override_v6</h1>
-            <div class="stat"><span>STATUS</span> <span class="ok">ONLINE</span></div>
-            <div class="stat"><span>ACTIVE BOTS</span> <span id="count">...</span></div>
-            <div class="stat"><span>DRIVER MODE</span> <span style="color: #FFFC00">MANUAL_VER_120</span></div>
-            <div class="log-view" id="logs">Connecting...</div>
+        <div class="box">
+            <div class="row"><span>SYSTEM</span> <span class="green">ONLINE</span></div>
+            <div class="row"><span>BOTS</span> <span id="c">0</span></div>
+            <div style="font-size: 10px; color: #666; margin-top: 10px;">DRIVER: NATIVE_MODE</div>
         </div>
         <script>
-            const update = () => {
-                fetch('/bot/status').then(r=>r.json()).then(d => {
-                    document.getElementById('count').innerText = Object.keys(d).length;
-                    if(Object.keys(d).length > 0) {
-                        fetch('/bot/logs?username='+Object.keys(d)[0]).then(r=>r.json()).then(l => {
-                            document.getElementById('logs').innerHTML = l.logs.slice(-7).join('<br>');
-                        });
-                    }
-                });
-            };
-            setInterval(update, 3000); update();
+            fetch('/bot/status').then(r=>r.json()).then(d => document.getElementById('c').innerText = Object.keys(d).length);
         </script>
     </body>
     </html>
     """
 
 def log(username, message):
-    entry = f"{time.strftime('%H:%M:%S')} {message}"
-    print(f"[{username}] {entry}")
+    print(f"[{username}] {message}")
     if username in BOT_REGISTRY:
-        BOT_REGISTRY[username]["logs"].append(entry)
+        BOT_REGISTRY[username]["logs"].append(f"{time.strftime('%H:%M')} {message}")
         if len(BOT_REGISTRY[username]["logs"]) > 50: BOT_REGISTRY[username]["logs"].pop(0)
 
 class SnapBot:
@@ -86,71 +71,74 @@ class SnapBot:
         self.driver = None
         self.user_data = f"/app/driver_data/{username}"
 
-    def spoof(self):
-        """Injects Windows 11 Identity"""
-        if not self.driver: return
-        try:
-            self.driver.execute_cdp_cmd("Network.setUserAgentOverride", {
-                "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-                "platform": "Windows",
-                "userAgentMetadata": {
-                    "brands": [{"brand": "Google Chrome", "version": "125"}, {"brand": "Chromium", "version": "125"}],
-                    "fullVersion": "125.0.6422.141",
-                    "platform": "Windows",
-                    "platformVersion": "15.0.0",
-                    "architecture": "x86",
-                    "mobile": False
-                }
-            })
-        except: pass
-
     def start_driver(self):
         if self.driver: return
         
         options = uc.ChromeOptions()
+        # CRITICAL: Point to the installed binary explicitly
         options.binary_location = "/usr/bin/chromium"
         
-        # STABILITY FLAGS
+        # --- STABILITY FLAGS ---
+        # These arguments are mandatory for Docker stability
         options.add_argument("--headless=new")
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
         options.add_argument("--disable-gpu")
-        options.add_argument("--disable-software-rasterizer")
-        options.add_argument("--blink-settings=imagesEnabled=true")
+        options.add_argument("--disable-infobars")
+        options.add_argument("--disable-popup-blocking")
+        
+        # Persistence
         options.add_argument(f"--user-data-dir={self.user_data}")
         
-        if self.proxy: options.add_argument(f'--proxy-server={self.proxy}')
+        if self.proxy: 
+            options.add_argument(f'--proxy-server={self.proxy}')
 
-        log(self.username, "Starting Driver (Version Check Skipped)...")
+        log(self.username, "Initializing Driver...")
         
-        # --- THE FIX: FORCE VERSION & SKIP PATCHING ---
-        self.driver = uc.Chrome(
-            options=options, 
-            driver_executable_path="/usr/bin/chromedriver",
-            version_main=125,  # Hardcodes version to skip auto-detection
-            use_subprocess=True # Improves stability in Docker
-        )
-        self.driver.set_window_size(1366, 768)
-        self.spoof()
+        # --- THE FIX: Explicit Paths & disable patching ---
+        try:
+            self.driver = uc.Chrome(
+                options=options,
+                driver_executable_path="/usr/bin/chromedriver",
+                browser_executable_path="/usr/bin/chromium",
+                version_main=None, # Let it auto-detect
+                headless=False,    # We handle headless via options above
+                use_subprocess=True
+            )
+        except Exception as e:
+            # Fallback: Sometimes version_main needs to be forced if auto-detect fails
+            log(self.username, f"Auto-start failed ({str(e)}). Retrying with forced parameters...")
+            self.driver = uc.Chrome(
+                options=options,
+                driver_executable_path="/usr/bin/chromedriver",
+                version_main=120, 
+                use_subprocess=True
+            )
+
+        self.driver.set_window_size(1280, 720)
+        
+        # Spoof Windows User Agent (Lightweight method)
+        self.driver.execute_cdp_cmd('Network.setUserAgentOverride', {
+            "userAgent": 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+        })
 
     def login(self):
         try:
             self.start_driver()
-            wait = WebDriverWait(self.driver, 25)
+            wait = WebDriverWait(self.driver, 20)
             
             log(self.username, "Navigating...")
             self.driver.get("https://web.snapchat.com/")
-            
-            # Check for bans/blocks immediately
             time.sleep(5)
-            src = self.driver.page_source.lower()
-            if "browser not supported" in src: return "ERROR_CAT_SCREEN"
-            if "forbidden" in src: return "ERROR_IP_BAN"
+            
+            # Detect Issues
+            if "browser not supported" in self.driver.page_source.lower():
+                return "ERROR_BROWSER_BLOCK"
 
             if len(self.driver.find_elements(By.CLASS_NAME, "FiLwP")) > 0:
                 return "LOGGED_IN"
 
-            log(self.username, "Inputting Creds...")
+            # Login
             try:
                 wait.until(EC.element_to_be_clickable((By.ID, "account_identifier"))).send_keys(self.username)
                 self.driver.find_element(By.XPATH, "//button[@type='submit']").click()
@@ -159,16 +147,17 @@ class SnapBot:
                 self.driver.find_element(By.XPATH, "//button[@type='submit']").click()
             except: pass
 
-            time.sleep(8)
+            time.sleep(5)
             if "verification" in self.driver.page_source.lower(): return "2FA_REQUIRED"
+            
             return "LOGGED_IN"
 
         except Exception as e:
-            log(self.username, f"Crash: {str(e)[:50]}")
+            log(self.username, f"Error: {str(e)[:50]}")
             return "ERROR"
 
     def farm(self):
-        log(self.username, "Farming Active.")
+        log(self.username, "Farm Active.")
         while True: time.sleep(60)
     
     def stop(self):
@@ -212,14 +201,6 @@ def remove_bot(username: str):
         del BOT_REGISTRY[username]
     return {"status": "Removed"}
 
-@app.post("/bot/stop")
-def stop_bot(data: dict):
-    user = data.get("username")
-    if user in BOT_REGISTRY:
-        BOT_REGISTRY[user]["instance"].stop()
-        BOT_REGISTRY[user]["status"] = "Stopped"
-    return {"status": "Stopped"}
-
 @app.post("/bot/2fa")
 async def handle_2fa(data: dict, bg: BackgroundTasks):
     user = data.get("username")
@@ -244,7 +225,14 @@ def get_logs(username: str):
     if username in BOT_REGISTRY: return {"logs": BOT_REGISTRY[username]["logs"]}
     return {"logs": []}
 
+@app.post("/bot/stop")
+def stop_bot(data: dict):
+    user = data.get("username")
+    if user in BOT_REGISTRY:
+        BOT_REGISTRY[user]["instance"].stop()
+        BOT_REGISTRY[user]["status"] = "Stopped"
+    return {"status": "Stopped"}
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
-
